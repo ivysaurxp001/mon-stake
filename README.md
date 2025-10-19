@@ -2,7 +2,7 @@
 
 A decentralized staking platform for MON tokens on Monad Testnet, built with Next.js and MetaMask Smart Accounts.
 
-## 🌟 Features
+## 🌟 Features1
 
 - **🔒 Stake MON Tokens** - Lock your MON to earn rewards
 - **💰 10% APY Rewards** - Earn passive income on staked tokens
