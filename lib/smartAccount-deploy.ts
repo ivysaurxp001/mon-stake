@@ -58,28 +58,51 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
 
   console.log("🚀 Creating MetaMask Smart Account...");
   console.log("👤 Owner:", userAccount);
+  console.log("🌐 RPC URL:", process.env.NEXT_PUBLIC_MONAD_RPC_URL);
+  console.log("🔗 Chain ID:", process.env.NEXT_PUBLIC_MONAD_CHAIN_ID);
+  console.log("🔗 Wallet Client:", !!walletClient);
+  console.log("🔗 Public Client:", !!publicClient);
+  console.log("🌍 Environment:", typeof window !== 'undefined' ? 'Browser' : 'Server');
+  console.log("🔗 MetaMask available:", typeof window !== 'undefined' && !!window.ethereum);
+  
+  // Test RPC connection
+  try {
+    const chainId = await publicClient.getChainId();
+    console.log("✅ RPC connection successful, Chain ID:", chainId);
+  } catch (error) {
+    console.error("❌ RPC connection failed:", error);
+    throw new Error("Cannot connect to Monad testnet RPC");
+  }
 
   try {
     // Create MetaMask Smart Account using delegation toolkit
     let smartAccountImpl;
     try {
+      console.log("🔄 Trying Hybrid implementation...");
       smartAccountImpl = await toMetaMaskSmartAccount({
         client: publicClient,
         implementation: Implementation.Hybrid,
         deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
         signer: { walletClient },
       } as any);
+      console.log("✅ Hybrid implementation successful");
     } catch (error) {
       console.warn("⚠️ Failed to create Smart Account with Hybrid implementation, trying Stateless7702...");
+      console.error("Hybrid error details:", error);
       try {
+        console.log("🔄 Trying Stateless7702 implementation...");
         smartAccountImpl = await toMetaMaskSmartAccount({
           client: publicClient,
           implementation: Implementation.Stateless7702,
           deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
           signer: { walletClient },
         } as any);
+        console.log("✅ Stateless7702 implementation successful");
       } catch (error2) {
-        console.error("❌ Failed to create Smart Account with both implementations:", error2);
+        console.error("❌ Failed to create Smart Account with both implementations:");
+        console.error("Stateless7702 error details:", error2);
+        console.error("Error message:", error2.message);
+        console.error("Error stack:", error2.stack);
         throw new Error("Smart Account creation failed. MetaMask Smart Account may not be supported on Monad testnet yet.");
       }
     }
