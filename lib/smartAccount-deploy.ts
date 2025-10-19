@@ -92,21 +92,25 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
     } catch (error) {
       console.warn("⚠️ Failed to create Smart Account with Hybrid implementation");
       console.error("Hybrid error details:", error);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      console.error("Error message:", errorMessage);
+      console.error("Error stack:", errorStack);
       
       // Check if it's a network issue
-      if (error.message.includes('network') || error.message.includes('chain')) {
-        throw new Error(`Network error: ${error.message}. Please ensure you're connected to Monad testnet in MetaMask.`);
+      if (errorMessage.includes('network') || errorMessage.includes('chain')) {
+        throw new Error(`Network error: ${errorMessage}. Please ensure you're connected to Monad testnet in MetaMask.`);
       }
       
       // Check if it's a MetaMask issue
-      if (error.message.includes('user rejected') || error.message.includes('denied')) {
+      if (errorMessage.includes('user rejected') || errorMessage.includes('denied')) {
         throw new Error(`User rejected the request. Please approve the Smart Account creation in MetaMask.`);
       }
       
       // Generic error
-      throw new Error(`Smart Account creation failed: ${error.message}. Please check MetaMask connection and network.`);
+      throw new Error(`Smart Account creation failed: ${errorMessage}. Please check MetaMask connection and network.`);
     }
 
     console.log("✅ Smart Account created:", smartAccountImpl.address);
