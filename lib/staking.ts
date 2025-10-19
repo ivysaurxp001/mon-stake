@@ -5,11 +5,14 @@ import type { SmartAccount } from './smartAccount-deploy';
 // Staking Contract Address - Deployed on Monad Testnet
 export const STAKING_CONTRACT = (process.env.NEXT_PUBLIC_STAKING_CONTRACT || '0x91e33a594da3e8e2ad3af5195611cf8cabe75353') as Address;
 
-// Bundler client for user operations
-const bundlerClient = createPublicClient({
-  chain: publicClient.chain,
-  transport: http(process.env.NEXT_PUBLIC_BUNDLER_RPC_URL || 'https://api.pimlico.io/v2/monad-testnet/rpc'),
-});
+// Get bundler URL with API key
+function getBundlerUrl(): string {
+  const apiKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY;
+  if (!apiKey || apiKey === 'your_pimlico_api_key_here') {
+    throw new Error('Pimlico API key not configured. Please add NEXT_PUBLIC_PIMLICO_API_KEY to .env.local');
+  }
+  return `https://api.pimlico.io/v2/monad-testnet/rpc?apikey=${apiKey}`;
+}
 
 /**
  * MonStaking Contract ABI
@@ -166,46 +169,151 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
 
   try {
     // Encode stake() function call
-    const data = encodeFunctionData({
+    const stakeCallData = encodeFunctionData({
       abi: STAKING_ABI,
       functionName: 'stake',
       args: []
     });
     
-    console.log('📋 Encoded stake function data:', data);
+    console.log('📋 Encoded stake function data:', stakeCallData);
     
-    // Get nonce from bundler
-    const nonceResponse = await fetch(process.env.NEXT_PUBLIC_BUNDLER_RPC_URL || 'https://api.pimlico.io/v2/monad-testnet/rpc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'eth_getTransactionCount',
-        params: [smartAccount.address, 'latest'],
-        id: 1,
-      }),
+    // Get bundler URL
+    const bundlerUrl = getBundlerUrl();
+    
+    // Check Smart Account balance
+    const balance = await smartAccount.client.getBalance({ 
+      address: smartAccount.address 
     });
-    const nonceData = await nonceResponse.json();
-    const nonce = nonceData.result;
+    console.log('💰 Smart Account balance:', formatEther(balance), 'MON');
+    
+    if (balance < amount + parseEther('0.01')) {
+      throw new Error(`Smart Account needs more MON. Current: ${formatEther(balance)} MON. Need: ${formatEther(amount + parseEther('0.01'))} MON (stake + gas). Please fund it on /deploy page.`);
+    }
+    
+    // Get nonce from Smart Account
+    const nonceValue = await smartAccount.client.getTransactionCount({ 
+      address: smartAccount.address 
+    });
+    
+    console.log('📋 Smart Account nonce:', nonceValue);
+    
+    // Get current gas price
+    const gasPrice = await smartAccount.client.getGasPrice();
+    const maxFeePerGas = (gasPrice * 120n) / 100n; // 120% of current gas price
+    const maxPriorityFeePerGas = parseEther('0.000001'); // 1 gwei
+    
+    console.log('⛽ Gas prices:', {
+      current: formatEther(gasPrice),
+      maxFee: formatEther(maxFeePerGas),
+      maxPriority: formatEther(maxPriorityFeePerGas)
+    });
 
-    // Create user operation
+    // IMPORTANT: ERC-4337 Smart Accounts need to wrap the call in executeBatch or similar
+    // Since direct calls don't support value, we need to encode: 
+    // executeBatch(address[] dest, uint256[] value, bytes[] func)
+    const executeBatchCallData = encodeFunctionData({
+      abi: [
+        {
+          name: 'executeBatch',
+          type: 'function',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'dest', type: 'address[]' },
+            { name: 'value', type: 'uint256[]' },
+            { name: 'func', type: 'bytes[]' }
+          ],
+          outputs: []
+        }
+      ],
+      functionName: 'executeBatch',
+      args: [
+        [STAKING_CONTRACT], // dest array
+        [amount], // value array
+        [stakeCallData] // func array
+      ]
+    });
+    
+    console.log('📋 ExecuteBatch call data:', executeBatchCallData);
+    
+    // Estimate gas using Pimlico bundler
+    let estimatedGas = {
+      callGasLimit: undefined as bigint | undefined,
+      verificationGasLimit: undefined as bigint | undefined,
+      preVerificationGas: undefined as bigint | undefined,
+    };
+    
+    try {
+      const estimateResponse = await fetch(bundlerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_estimateUserOperationGas',
+          params: [
+            {
+              sender: smartAccount.address,
+              nonce: `0x${nonceValue.toString(16)}`,
+              initCode: '0x',
+              callData: executeBatchCallData,
+              paymasterAndData: '0x',
+              signature: '0x' + '00'.repeat(65), // Dummy signature for estimation
+            },
+            '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789' // EntryPoint v0.6
+          ],
+          id: 1,
+        }),
+      });
+      
+      const estimateData = await estimateResponse.json();
+      
+      if (estimateData.result) {
+        estimatedGas.callGasLimit = BigInt(estimateData.result.callGasLimit);
+        estimatedGas.verificationGasLimit = BigInt(estimateData.result.verificationGasLimit);
+        estimatedGas.preVerificationGas = BigInt(estimateData.result.preVerificationGas);
+        console.log('⚡ Gas estimated from bundler:', estimateData.result);
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to estimate gas from bundler, using fallback values');
+    }
+    
+    // Dynamic gas limits with +30% buffer
+    const callGasLimit = estimatedGas.callGasLimit 
+      ? estimatedGas.callGasLimit + (estimatedGas.callGasLimit * 30n / 100n)
+      : 400000n;
+
+    const verificationGasLimit = estimatedGas.verificationGasLimit
+      ? estimatedGas.verificationGasLimit + (estimatedGas.verificationGasLimit * 30n / 100n)
+      : 1000000n;
+
+    const preVerificationGas = estimatedGas.preVerificationGas
+      ? estimatedGas.preVerificationGas + (estimatedGas.preVerificationGas * 30n / 100n)
+      : 800000n;
+    
+    console.log('⛽ Final gas limits (+30% buffer):', {
+      callGasLimit: callGasLimit.toString(),
+      verificationGasLimit: verificationGasLimit.toString(),
+      preVerificationGas: preVerificationGas.toString()
+    });
+    
+    // Create user operation with dynamic gas
     const userOperation = {
       sender: smartAccount.address,
-      nonce: nonce,
-      callData: data,
-      callGasLimit: '0x186A0', // 100000
-      verificationGasLimit: '0x186A0', // 100000
-      preVerificationGas: '0x5208', // 21000
-      maxFeePerGas: '0x38D7EA4C68000', // 0.001 ETH in wei
-      maxPriorityFeePerGas: '0x5AF3107A4000', // 0.0001 ETH in wei
+      nonce: `0x${nonceValue.toString(16)}`,
+      initCode: '0x',
+      callData: executeBatchCallData,
+      callGasLimit: `0x${callGasLimit.toString(16)}`,
+      verificationGasLimit: `0x${verificationGasLimit.toString(16)}`, 
+      preVerificationGas: `0x${preVerificationGas.toString(16)}`,
+      maxFeePerGas: `0x${maxFeePerGas.toString(16)}`,
+      maxPriorityFeePerGas: `0x${maxPriorityFeePerGas.toString(16)}`,
       paymasterAndData: '0x',
       signature: '0x',
     };
 
     console.log('📋 User Operation:', userOperation);
 
-    // Send user operation via bundler RPC
-    const userOpResponse = await fetch(process.env.NEXT_PUBLIC_BUNDLER_RPC_URL || 'https://api.pimlico.io/v2/monad-testnet/rpc', {
+    // Send user operation via bundler
+    const userOpResponse = await fetch(bundlerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -218,27 +326,51 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
         id: 1,
       }),
     });
+    
     const userOpData = await userOpResponse.json();
+    
+    if (userOpData.error) {
+      console.error('❌ Bundler error:', userOpData.error);
+      throw new Error(`Bundler error: ${userOpData.error.message || JSON.stringify(userOpData.error)}`);
+    }
+    
     const userOpHash = userOpData.result;
-
     console.log('✅ User Operation sent:', userOpHash);
     
-    // Wait for user operation to be mined
-    const receiptResponse = await fetch(process.env.NEXT_PUBLIC_BUNDLER_RPC_URL || 'https://api.pimlico.io/v2/monad-testnet/rpc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'eth_getUserOperationReceipt',
-        params: [userOpHash],
-        id: 1,
-      }),
-    });
-    const receiptData = await receiptResponse.json();
-    const receipt = receiptData.result;
-
+    // Poll for receipt (bundler may take time)
+    let receipt = null;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+      
+      const receiptResponse = await fetch(bundlerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_getUserOperationReceipt',
+          params: [userOpHash],
+          id: 1,
+        }),
+      });
+      
+      const receiptData = await receiptResponse.json();
+      
+      if (receiptData.result) {
+        receipt = receiptData.result;
+        break;
+      }
+      
+      console.log(`⏳ Waiting for user operation... (${i + 1}/10)`);
+    }
+    
+    if (!receipt) {
+      // Return userOpHash even if receipt not available yet
+      console.log('⚠️ Receipt not available yet. Transaction may still be pending.');
+      return userOpHash as `0x${string}`;
+    }
+    
     console.log('✅ User Operation receipt:', receipt);
-    return receipt.receipt.transactionHash;
+    return receipt.receipt?.transactionHash || userOpHash as `0x${string}`;
 
   } catch (error) {
     console.error('❌ Stake failed:', error);

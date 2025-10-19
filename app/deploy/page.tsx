@@ -1,4 +1,5 @@
 import SmartAccountDeploy from "@/components/SmartAccountDeploy";
+import FundSmartAccount from "@/components/FundSmartAccount";
 
 export default function DeployPage() {
   return (
@@ -26,8 +27,9 @@ export default function DeployPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid lg:grid-cols-3 gap-8">
             {/* Deploy Component - Takes 2 columns */}
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 space-y-8">
               <SmartAccountDeploy />
+              <FundSmartAccount />
             </div>
 
             {/* Benefits Panel - Takes 1 column */}
