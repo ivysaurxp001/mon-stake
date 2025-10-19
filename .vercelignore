@@ -9,6 +9,10 @@ contracts/
 scripts/
 tests/
 
+# Exclude Hardhat config files
+hardhat.config.ts
+hardhat.config.js
+
 # Exclude development files
 *.log
 *.md

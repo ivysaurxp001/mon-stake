@@ -24,6 +24,15 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "envio"]
+  "exclude": [
+    "node_modules", 
+    "envio",
+    "monad-erc20",
+    "contracts",
+    "scripts", 
+    "tests",
+    "hardhat.config.ts",
+    "hardhat.config.js"
+  ]
 }
 

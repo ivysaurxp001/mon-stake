@@ -22,7 +22,9 @@ const nextConfig = {
         './envio/**/*',
         './contracts/**/*',
         './scripts/**/*',
-        './tests/**/*'
+        './tests/**/*',
+        './hardhat.config.ts',
+        './hardhat.config.js'
       ]
     }
   }

@@ -8,9 +8,6 @@ interface StakingEvent {
   user: string;
   amount: string;
   timestamp: string;
-  transactionHash: string;
-  blockNumber: string;
-  blockTimestamp: string;
 }
 
 interface UnstakingEvent {
@@ -19,9 +16,6 @@ interface UnstakingEvent {
   amount: string;
   reward: string;
   timestamp: string;
-  transactionHash: string;
-  blockNumber: string;
-  blockTimestamp: string;
 }
 
 interface RewardClaimedEvent {
@@ -29,9 +23,6 @@ interface RewardClaimedEvent {
   user: string;
   amount: string;
   timestamp: string;
-  transactionHash: string;
-  blockNumber: string;
-  blockTimestamp: string;
 }
 
 interface StakingHistoryProps {
@@ -43,11 +34,14 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
   const [stakingEvents, setStakingEvents] = useState<StakingEvent[]>([]);
   const [unstakingEvents, setUnstakingEvents] = useState<UnstakingEvent[]>([]);
   const [rewardEvents, setRewardEvents] = useState<RewardClaimedEvent[]>([]);
+  const [totalStaked, setTotalStaked] = useState<string>("0");
+  const [totalClaimed, setTotalClaimed] = useState<string>("0");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Default Envio API URL (you can override this)
-  const defaultApiUrl = envioApiUrl || process.env.NEXT_PUBLIC_ENVIO_API_URL || "https://api.envio.dev/v1/graphql";
+  // Replace with your actual Envio playground URL that has data
+  const defaultApiUrl = envioApiUrl || process.env.NEXT_PUBLIC_ENVIO_API_URL || "YOUR_PLAYGROUND_URL_HERE";
 
   useEffect(() => {
     const fetchStakingHistory = async () => {
@@ -59,39 +53,57 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
       try {
         setLoading(true);
         setError(null);
+        
+        console.log('🌐 Using Envio API URL:', defaultApiUrl);
+        console.log('👤 Querying for user:', userAddress);
 
-        // GraphQL query for user staking history
+        // GraphQL query for user staking history (fetch all events to calculate totals)
         const query = `
-          query UserStakingHistory($user: String!) {
-            stakeds(where: { user: $user }, orderBy: timestamp, orderDirection: desc, first: 10) {
+          query UserStakingHistory($user: String!, $userLower: String!) {
+            Stakemon_Staked(
+              where: { 
+                _or: [
+                  { user: { _eq: $user } },
+                  { user: { _eq: $userLower } }
+                ]
+              }
+              order_by: { timestamp: desc }
+            ) {
               id
               user
               amount
               timestamp
-              transactionHash
-              blockNumber
-              blockTimestamp
             }
             
-            unstakeds(where: { user: $user }, orderBy: timestamp, orderDirection: desc, first: 10) {
+            Stakemon_Unstaked(
+              where: { 
+                _or: [
+                  { user: { _eq: $user } },
+                  { user: { _eq: $userLower } }
+                ]
+              }
+              order_by: { timestamp: desc }
+            ) {
               id
               user
               amount
               reward
               timestamp
-              transactionHash
-              blockNumber
-              blockTimestamp
             }
             
-            rewardClaimeds(where: { user: $user }, orderBy: timestamp, orderDirection: desc, first: 10) {
+            Stakemon_RewardClaimed(
+              where: { 
+                _or: [
+                  { user: { _eq: $user } },
+                  { user: { _eq: $userLower } }
+                ]
+              }
+              order_by: { timestamp: desc }
+            ) {
               id
               user
               amount
               timestamp
-              transactionHash
-              blockNumber
-              blockTimestamp
             }
           }
         `;
@@ -103,7 +115,10 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
           },
           body: JSON.stringify({
             query,
-            variables: { user: userAddress.toLowerCase() }
+            variables: { 
+              user: userAddress, // Original case
+              userLower: userAddress.toLowerCase() // Lowercase
+            }
           })
         });
 
@@ -117,9 +132,30 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
           throw new Error(data.errors[0].message);
         }
 
-        setStakingEvents(data.data.stakeds || []);
-        setUnstakingEvents(data.data.unstakeds || []);
-        setRewardEvents(data.data.rewardClaimeds || []);
+        const stakedEvents = data.data.Stakemon_Staked || [];
+        const unstakedEvents = data.data.Stakemon_Unstaked || [];
+        const claimedEvents = data.data.Stakemon_RewardClaimed || [];
+        
+        console.log('🔍 Envio API Response:', data.data);
+        console.log('📊 Staked Events:', stakedEvents);
+        console.log('📊 Unstaked Events:', unstakedEvents);
+        console.log('📊 Claimed Events:', claimedEvents);
+        
+        setStakingEvents(stakedEvents);
+        setUnstakingEvents(unstakedEvents);
+        setRewardEvents(claimedEvents);
+        
+        // Calculate totals manually
+        const totalStakedAmount = stakedEvents.reduce((sum: bigint, event: StakingEvent) => {
+          return sum + BigInt(event.amount);
+        }, 0n);
+        
+        const totalClaimedAmount = claimedEvents.reduce((sum: bigint, event: RewardClaimedEvent) => {
+          return sum + BigInt(event.amount);
+        }, 0n);
+        
+        setTotalStaked(totalStakedAmount.toString());
+        setTotalClaimed(totalClaimedAmount.toString());
 
       } catch (error: any) {
         console.error('Failed to fetch staking history:', error);
@@ -136,8 +172,10 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
     return new Date(Number(timestamp) * 1000).toLocaleString();
   };
 
-  const getExplorerUrl = (txHash: string) => {
-    return `https://testnet.monadexplorer.com/tx/${txHash}`;
+  const getExplorerUrl = (eventId: string) => {
+    // Extract transaction hash from event ID (format: chainId_blockNumber_logIndex)
+    // For now, we'll link to the user's address on explorer since we don't have tx hash
+    return `https://testnet.monadexplorer.com/address/${userAddress}`;
   };
 
   if (loading) {
@@ -208,7 +246,7 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
     ...stakingEvents.map(event => ({ ...event, type: 'stake' as const })),
     ...unstakingEvents.map(event => ({ ...event, type: 'unstake' as const })),
     ...rewardEvents.map(event => ({ ...event, type: 'claim' as const }))
-  ].sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+  ].sort((a, b) => Number(b.timestamp) - Number(a.timestamp)).slice(0, 10); // Show only latest 10 events
 
   if (allEvents.length === 0) {
     return (
@@ -233,10 +271,22 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
           <p style={{ 
             color: '#6b7280', 
             fontSize: '1rem',
-            margin: 0
+            margin: '0 0 1rem 0'
           }}>
-            Start staking to see your transaction history here
+            Envio indexer is running but no events found for this address
           </p>
+          <div style={{
+            background: 'rgba(139, 92, 246, 0.1)',
+            padding: '1rem',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            color: '#6b7280'
+          }}>
+            <strong>Debug Info:</strong><br/>
+            API URL: {defaultApiUrl}<br/>
+            User: {userAddress}<br/>
+            Events found: {stakingEvents.length + unstakingEvents.length + rewardEvents.length}
+          </div>
         </div>
       </div>
     );
@@ -271,6 +321,42 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
           }}>
             Your recent staking transactions and rewards
           </p>
+        </div>
+
+        {/* Aggregate Stats */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '1rem',
+          marginBottom: '2rem'
+        }}>
+          <div style={{
+            padding: '1.5rem',
+            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+            borderRadius: '12px',
+            border: '1px solid #bae6fd'
+          }}>
+            <div style={{ fontSize: '0.875rem', color: '#0369a1', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Total Staked
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#0c4a6e' }}>
+              {formatEther(BigInt(totalStaked))} MON
+            </div>
+          </div>
+
+          <div style={{
+            padding: '1.5rem',
+            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+            borderRadius: '12px',
+            border: '1px solid #bbf7d0'
+          }}>
+            <div style={{ fontSize: '0.875rem', color: '#16a34a', fontWeight: '600', marginBottom: '0.5rem' }}>
+              Total Claimed
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#14532d' }}>
+              {formatEther(BigInt(totalClaimed))} MON
+            </div>
+          </div>
         </div>
 
         <div style={{ 
@@ -369,7 +455,7 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
                   gap: '0.5rem'
                 }}>
                   <a
-                    href={getExplorerUrl(event.transactionHash)}
+                    href={getExplorerUrl(event.id)}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
@@ -401,7 +487,7 @@ export default function StakingHistory({ userAddress, envioApiUrl }: StakingHist
                     color: '#9ca3af',
                     fontFamily: 'monospace'
                   }}>
-                    {event.transactionHash.slice(0, 10)}...{event.transactionHash.slice(-8)}
+                    Event ID: {event.id.slice(0, 8)}...
                   </div>
                 </div>
               </div>
