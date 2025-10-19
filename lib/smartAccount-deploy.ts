@@ -82,10 +82,12 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
       console.log("📋 Deploy params:", [userAccount, [], [], []]);
       console.log("📋 Wallet client account:", walletClient.account);
       
+      // Try without deployParams first
+      console.log("📋 Trying without deployParams...");
+      
       smartAccountImpl = await toMetaMaskSmartAccount({
         client: publicClient,
         implementation: Implementation.Hybrid,
-        deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
         signer: { walletClient },
       } as any);
       console.log("✅ Hybrid implementation successful");

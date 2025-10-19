@@ -66,11 +66,15 @@ export function MetaMaskProvider({ children }: { children: React.ReactNode }) {
 
       setAccount(selectedAccount);
       setSmartAccount(smartAccountInstance);
+      setError(null); // Clear any previous errors
 
       return smartAccountInstance;
     } catch (err: any) {
       const message = err?.message ?? "Failed to connect MetaMask.";
       setError(message);
+      // Clear smart account state on error
+      smartAccountRef.current = null;
+      setSmartAccount(null);
       throw err;
     } finally {
       setIsConnecting(false);
@@ -210,6 +214,10 @@ export function MetaMaskProvider({ children }: { children: React.ReactNode }) {
         setSmartAccount(smartAccountInstance);
       } catch (err) {
         console.warn("Failed to restore MetaMask session:", err);
+        // Clear smart account state on error
+        smartAccountRef.current = null;
+        setSmartAccount(null);
+        setError(err instanceof Error ? err.message : "Failed to create Smart Account");
       }
     };
 
