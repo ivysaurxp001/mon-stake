@@ -695,7 +695,7 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
 }
 
 /**
- * Unstake MON tokens
+ * Unstake MON tokens using Smart Account via Bundler
  */
 export async function unstake(smartAccount: SmartAccount, amount: bigint): Promise<`0x${string}`> {
   if (STAKING_CONTRACT === '0x0000000000000000000000000000000000000000') {
@@ -703,40 +703,75 @@ export async function unstake(smartAccount: SmartAccount, amount: bigint): Promi
   }
 
   console.log('🔓 Unstaking', formatEther(amount), 'MON');
+  console.log('Smart Account Address:', smartAccount.address);
+  console.log('Staking Contract:', STAKING_CONTRACT);
 
-  try {
-    // Encode unstake function call
-    const data = encodeFunctionData({
-      abi: STAKING_ABI,
-      functionName: 'unstake',
-      args: [amount]
-    });
-
-    // For browser environment with MetaMask
-    if (typeof window !== 'undefined' && window.ethereum) {
-      const txHash = await window.ethereum.request({
-        method: 'eth_sendTransaction',
-        params: [{
-          from: smartAccount.address,
-          to: STAKING_CONTRACT,
-          value: '0x0',
-          data,
-        }],
+  // ✅ Use Viem bundlerClient.sendUserOperation() - the CORRECT way!
+  if (smartAccount.implementation) {
+    try {
+      console.log('🚀 Using Viem bundlerClient.sendUserOperation() for unstake...');
+      
+      // Create bundler client
+      const bundlerUrl = getBundlerUrl();
+      const bundlerClient = createBundlerClient({
+        client: publicClient,
+        transport: http(bundlerUrl),
       });
       
-      console.log('✅ Unstake transaction sent:', txHash);
-      return txHash as `0x${string}`;
+      // Get gas prices
+      const gasPrice = await smartAccount.client.getGasPrice();
+      const maxFeePerGas = (gasPrice * 150n) / 100n; // 150% buffer
+      const maxPriorityFeePerGas = parseEther('0.000001');
+      
+      console.log('⛽ Gas prices:', {
+        maxFee: formatEther(maxFeePerGas),
+        maxPriority: formatEther(maxPriorityFeePerGas)
+      });
+      
+      // Encode unstake() call
+      const unstakeCallData = encodeFunctionData({
+        abi: STAKING_ABI,
+        functionName: 'unstake',
+        args: [amount]
+      });
+      
+      console.log('📋 Sending UserOp via bundlerClient for unstake...');
+      
+      // Send user operation using Viem's standard method
+      const userOperationHash = await bundlerClient.sendUserOperation({
+        account: smartAccount.implementation, // Use MetaMask Smart Account
+        calls: [
+          {
+            to: STAKING_CONTRACT,
+            value: 0n, // No value for unstake
+            data: unstakeCallData,
+          },
+        ],
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+      
+      console.log('✅ UserOperation hash:', userOperationHash);
+      
+      // Wait for receipt
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: userOperationHash,
+      });
+      
+      console.log('✅ UserOperation receipt:', receipt);
+      return receipt.receipt.transactionHash;
+      
+    } catch (error) {
+      console.error('❌ Viem bundlerClient failed for unstake:', error);
+      throw error;
     }
-
-    throw new Error('Please use MetaMask in browser to unstake');
-  } catch (error) {
-    console.error('❌ Unstake failed:', error);
-    throw error;
   }
+
+  throw new Error('Smart Account implementation not available');
 }
 
 /**
- * Claim rewards without unstaking
+ * Claim rewards using Smart Account via Bundler
  */
 export async function claimRewards(smartAccount: SmartAccount): Promise<`0x${string}`> {
   if (STAKING_CONTRACT === '0x0000000000000000000000000000000000000000') {
@@ -744,36 +779,71 @@ export async function claimRewards(smartAccount: SmartAccount): Promise<`0x${str
   }
 
   console.log('🎁 Claiming rewards');
+  console.log('Smart Account Address:', smartAccount.address);
+  console.log('Staking Contract:', STAKING_CONTRACT);
 
-  try {
-    // Encode claimRewards function call
-    const data = encodeFunctionData({
-      abi: STAKING_ABI,
-      functionName: 'claimRewards',
-      args: []
-    });
-
-    // For browser environment with MetaMask
-    if (typeof window !== 'undefined' && window.ethereum) {
-      const txHash = await window.ethereum.request({
-        method: 'eth_sendTransaction',
-        params: [{
-          from: smartAccount.address,
-          to: STAKING_CONTRACT,
-          value: '0x0',
-          data,
-        }],
+  // ✅ Use Viem bundlerClient.sendUserOperation() - the CORRECT way!
+  if (smartAccount.implementation) {
+    try {
+      console.log('🚀 Using Viem bundlerClient.sendUserOperation() for claim rewards...');
+      
+      // Create bundler client
+      const bundlerUrl = getBundlerUrl();
+      const bundlerClient = createBundlerClient({
+        client: publicClient,
+        transport: http(bundlerUrl),
       });
       
-      console.log('✅ Claim transaction sent:', txHash);
-      return txHash as `0x${string}`;
+      // Get gas prices
+      const gasPrice = await smartAccount.client.getGasPrice();
+      const maxFeePerGas = (gasPrice * 150n) / 100n; // 150% buffer
+      const maxPriorityFeePerGas = parseEther('0.000001');
+      
+      console.log('⛽ Gas prices:', {
+        maxFee: formatEther(maxFeePerGas),
+        maxPriority: formatEther(maxPriorityFeePerGas)
+      });
+      
+      // Encode claimRewards() call
+      const claimCallData = encodeFunctionData({
+        abi: STAKING_ABI,
+        functionName: 'claimRewards',
+        args: []
+      });
+      
+      console.log('📋 Sending UserOp via bundlerClient for claim rewards...');
+      
+      // Send user operation using Viem's standard method
+      const userOperationHash = await bundlerClient.sendUserOperation({
+        account: smartAccount.implementation, // Use MetaMask Smart Account
+        calls: [
+          {
+            to: STAKING_CONTRACT,
+            value: 0n, // No value for claim
+            data: claimCallData,
+          },
+        ],
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+      
+      console.log('✅ UserOperation hash:', userOperationHash);
+      
+      // Wait for receipt
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: userOperationHash,
+      });
+      
+      console.log('✅ UserOperation receipt:', receipt);
+      return receipt.receipt.transactionHash;
+      
+    } catch (error) {
+      console.error('❌ Viem bundlerClient failed for claim rewards:', error);
+      throw error;
     }
-
-    throw new Error('Please use MetaMask in browser to claim rewards');
-  } catch (error) {
-    console.error('❌ Claim failed:', error);
-    throw error;
   }
+
+  throw new Error('Smart Account implementation not available');
 }
 
 /**
