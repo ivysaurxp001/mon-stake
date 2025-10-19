@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMetaMask } from "./MetaMaskProvider";
 
 export default function SmartAccountDeploy() {
@@ -8,6 +8,14 @@ export default function SmartAccountDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployTx, setDeployTx] = useState<string | null>(null);
   const [isDeployed, setIsDeployed] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+
+  // Auto-check Smart Account status when component loads
+  useEffect(() => {
+    if (smartAccount) {
+      handleCheckSmartAccountStatus();
+    }
+  }, [smartAccount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeploy = async () => {
     if (!smartAccount) {
@@ -38,6 +46,7 @@ export default function SmartAccountDeploy() {
   const handleCheckSmartAccountStatus = async () => {
     if (!smartAccount) return;
 
+    setIsChecking(true);
     try {
       const status = await smartAccount.checkSmartAccountStatus();
       console.log("📋 Smart Account Status:", status);
@@ -45,9 +54,12 @@ export default function SmartAccountDeploy() {
       // Update deployment status based on check result
       setIsDeployed(status.isDeployed);
       
-      alert(`Smart Account Status:\nAddress: ${status.address}\nHas Bytecode: ${status.hasBytecode}\nBytecode Length: ${status.bytecodeLength}\nIs Deployed: ${status.isDeployed}`);
+      console.log(`Smart Account Status: Address=${status.address}, Has Bytecode=${status.hasBytecode}, Bytecode Length=${status.bytecodeLength}, Is Deployed=${status.isDeployed}`);
     } catch (error) {
       console.error("❌ Failed to check Smart Account status:", error);
+      setIsDeployed(false);
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -122,40 +134,50 @@ export default function SmartAccountDeploy() {
         <div className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl">
           <div className="flex items-center">
             <div className={`w-3 h-3 rounded-full mr-3 ${
+              isChecking ? 'bg-blue-500 animate-pulse' : 
               isDeployed ? 'bg-green-500' : 'bg-yellow-500'
             }`}></div>
             <span className="text-sm font-semibold text-gray-700">Status</span>
           </div>
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+            isChecking ? 'bg-blue-100 text-blue-800' :
             isDeployed 
               ? 'bg-green-100 text-green-800' 
               : 'bg-yellow-100 text-yellow-800'
           }`}>
-            {isDeployed ? '✅ Deployed' : '⏳ Not Deployed'}
+            {isChecking ? '🔍 Checking...' : 
+             isDeployed ? '✅ Deployed' : '⏳ Not Deployed'}
           </span>
         </div>
       </div>
 
       <div className="space-y-4">
-        <button
-          onClick={handleCheckSmartAccountStatus}
-          className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-        >
-          <span className="mr-2">🔬</span>
-          Check Smart Account Status
-        </button>
+        {!isDeployed && (
+          <button
+            onClick={handleTryAutomaticDeployment}
+            disabled={isDeploying || isChecking}
+            className={`w-full font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg ${
+              isDeploying || isChecking
+                ? 'bg-gray-400 cursor-not-allowed text-gray-600'
+                : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white hover:shadow-xl transform hover:-translate-y-0.5'
+            }`}
+          >
+            <span className="mr-2">⚡</span>
+            {isDeploying ? 'Deploying...' : 'Deploy Smart Account'}
+          </button>
+        )}
         
         <button
-          onClick={handleTryAutomaticDeployment}
-          disabled={isDeploying}
+          onClick={handleCheckSmartAccountStatus}
+          disabled={isChecking}
           className={`w-full font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg ${
-            isDeploying
+            isChecking
               ? 'bg-gray-400 cursor-not-allowed text-gray-600'
-              : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white hover:shadow-xl transform hover:-translate-y-0.5'
+              : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white hover:shadow-xl transform hover:-translate-y-0.5'
           }`}
         >
-          <span className="mr-2">⚡</span>
-          {isDeploying ? 'Deploying...' : 'Try Automatic Deployment'}
+          <span className="mr-2">🔬</span>
+          {isChecking ? 'Checking...' : 'Refresh Status'}
         </button>
       </div>
 

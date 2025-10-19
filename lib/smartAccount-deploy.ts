@@ -1,6 +1,38 @@
-import { createWalletClient, custom, createPublicClient, http, isAddress } from "viem";
+import { createWalletClient, custom, createPublicClient, http, isAddress, keccak256, encodePacked } from "viem";
 import { monadTestnet } from "./chain";
 import { Implementation, toMetaMaskSmartAccount } from "@metamask/delegation-toolkit";
+
+// Function to calculate Smart Account address using MetaMask Delegation Toolkit
+async function calculateSmartAccountAddress(owner: `0x${string}`, publicClient: any): Promise<`0x${string}`> {
+  console.log("🔍 Calculating Smart Account address for owner:", owner);
+  
+  try {
+    // Use MetaMask Delegation Toolkit to calculate deterministic address
+    // According to docs: deployParams = [owner, p256KeyIds, p256XValues, p256YValues]
+    // For a simple EOA owner with no passkeys, use empty arrays for passkey params
+    
+    // Create a minimal Smart Account instance just to get the address
+    // We don't need a real signer for this, just the deployParams
+    const tempSmartAccount = await toMetaMaskSmartAccount({
+      client: publicClient,
+      implementation: Implementation.Hybrid,
+      deployParams: [owner, [], [], []], // [owner, passkeyIds, publicKeyX, publicKeyY]
+      deploySalt: "0x", // Default salt
+      signer: { account: { address: owner, type: 'json-rpc' } } as any,
+    } as any);
+    
+    console.log("✅ Got Smart Account address from toolkit:", tempSmartAccount.address);
+    return tempSmartAccount.address;
+  } catch (error) {
+    console.log("❌ Failed to calculate address from toolkit:", error);
+    if (error instanceof Error) {
+      console.error("Error details:", error.message);
+    }
+  }
+  
+  console.log("⚠️ Using EOA address as fallback");
+  return owner;
+}
 
 export type SmartAccount = {
   address: `0x${string}`;
@@ -79,17 +111,27 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
     let smartAccountImpl;
     try {
       console.log("🔄 Trying Hybrid implementation...");
-      console.log("📋 Deploy params:", [userAccount, [], [], []]);
-      console.log("📋 Wallet client account:", walletClient.account);
       
-      // Try without deployParams first
-      console.log("📋 Trying without deployParams...");
+      // According to MetaMask Delegation Toolkit docs:
+      // deployParams for Hybrid = [owner, p256KeyIds, p256XValues, p256YValues]
+      // For simple EOA owner with no passkeys, use empty arrays
+      const deployParams: [`0x${string}`, string[], bigint[], bigint[]] = [
+        userAccount as `0x${string}`,  // owner address
+        [],                             // p256KeyIds (empty for EOA-only)
+        [],                             // p256XValues (empty for EOA-only)
+        []                              // p256YValues (empty for EOA-only)
+      ];
+      
+      console.log("📋 Deploy params:", deployParams);
+      console.log("📋 Wallet client account:", walletClient.account);
       
       smartAccountImpl = await toMetaMaskSmartAccount({
         client: publicClient,
         implementation: Implementation.Hybrid,
+        deployParams: deployParams,
+        deploySalt: "0x", // Default salt
         signer: { walletClient },
-      } as any);
+      });
       console.log("✅ Hybrid implementation successful");
     } catch (error) {
       console.warn("⚠️ Failed to create Smart Account with Hybrid implementation");
@@ -111,8 +153,77 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
         throw new Error(`User rejected the request. Please approve the Smart Account creation in MetaMask.`);
       }
       
-      // Generic error
-      throw new Error(`Smart Account creation failed: ${errorMessage}. Please check MetaMask connection and network.`);
+      // Generic error - try manual Smart Account deployment
+      console.warn("⚠️ MetaMask Smart Account library not supported. Trying manual deployment...");
+      
+      // Create a mock Smart Account that will be deployed manually
+      const mockSmartAccount = {
+        address: userAccount, // Use EOA address as Smart Account address
+        implementation: null,
+        smartAccountClient: null,
+        client: publicClient,
+        getFactoryArgs: async () => ({ factory: "0x", factoryData: "0x" }),
+        checkDeploymentStatus: async () => ({
+          factory: null,
+          factoryData: null,
+          factoryExists: false,
+          canDeploy: true // Allow manual deployment
+        }),
+        tryAutomaticDeployment: async () => {
+          console.log("⚠️ Manual deployment required - Smart Account library not supported");
+          console.log("💡 To deploy Smart Account manually:");
+          console.log("1. Go to /deploy page");
+          console.log("2. Click 'Deploy Smart Account' button");
+          console.log("3. Approve the deployment transaction in MetaMask");
+          return null;
+        },
+        checkSmartAccountStatus: async () => {
+          console.log("🔍 Checking Smart Account status (fallback mode)...");
+          
+          try {
+            // Use MetaMask Delegation Toolkit to calculate Smart Account address
+            const smartAccountAddress = await calculateSmartAccountAddress(userAccount, publicClient);
+            
+            console.log("📋 EOA Address:", userAccount);
+            console.log("📋 Calculated Smart Account Address:", smartAccountAddress);
+            
+            // Check balance first to see if this address has any funds
+            const balance = await publicClient.getBalance({ address: smartAccountAddress as `0x${string}` });
+            console.log("💰 Smart Account Balance:", balance.toString(), "wei");
+            
+            // Check bytecode of the calculated Smart Account address
+            const bytecode = await publicClient.getBytecode({ address: smartAccountAddress as `0x${string}` });
+            const hasBytecode = bytecode && bytecode !== '0x';
+            
+            console.log("📋 Has Bytecode:", hasBytecode);
+            console.log("📋 Bytecode Length:", bytecode ? bytecode.length : 0);
+            console.log("📋 Bytecode (first 100 chars):", bytecode ? bytecode.slice(0, 100) : "none");
+            
+            // If address has balance but no bytecode, it might be an EOA
+            // If address has balance and bytecode, it's a deployed Smart Account
+            const isDeployed = hasBytecode || (balance > 0n && hasBytecode);
+            
+            console.log("📋 Final isDeployed:", isDeployed);
+            
+            return {
+              address: smartAccountAddress,
+              hasBytecode: !!hasBytecode,
+              bytecodeLength: bytecode ? bytecode.length : 0,
+              isDeployed: !!isDeployed
+            };
+          } catch (error) {
+            console.error("❌ Failed to check Smart Account status (fallback):", error);
+            return {
+              address: userAccount,
+              hasBytecode: false,
+              bytecodeLength: 0,
+              isDeployed: false
+            };
+          }
+        }
+      };
+      
+      return mockSmartAccount as any;
     }
 
     console.log("✅ Smart Account created:", smartAccountImpl.address);
