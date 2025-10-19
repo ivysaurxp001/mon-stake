@@ -375,35 +375,50 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
         }
       },
       tryAutomaticDeployment: async () => {
-        console.log("🚀 Trying automatic deployment via staking operation...");
+        console.log("🚀 Trying to deploy Smart Account via Factory...");
         
         try {
-          // Check if Smart Account is already deployed before trying
+          // Check if Smart Account is already deployed
           const wasAlreadyDeployed = await isSmartAccountDeployed(smartAccountImpl.address as `0x${string}`);
-          console.log("🔍 Smart Account was already deployed:", wasAlreadyDeployed);
+          console.log("🔍 Smart Account already deployed:", wasAlreadyDeployed);
           
-          // Try to send a simple transaction to trigger automatic deployment
+          if (wasAlreadyDeployed) {
+            console.log("✅ Smart Account already deployed, no need to deploy again");
+            return "0x0"; // Return dummy tx hash
+          }
+          
+          // Get factory and factoryData from Smart Account
+          const { factory, factoryData } = await smartAccountImpl.getFactoryArgs();
+          
+          console.log("📋 Factory address:", factory);
+          console.log("📋 Factory data length:", factoryData ? factoryData.length : 0);
+          
+          if (!factory || !factoryData || factoryData === '0x') {
+            throw new Error("Factory or factoryData not available. Smart Account may not support deployment via factory.");
+          }
+          
+          // Call factory contract to deploy Smart Account
+          // The factory.deploy() or factory.createAccount() method will deploy the Smart Account
           const hash = await walletClient.sendTransaction({
-            to: smartAccountImpl.address as `0x${string}`,
+            to: factory as `0x${string}`,
+            data: factoryData as `0x${string}`,
             value: 0n,
-            data: '0x', // Empty data
           });
           
-          console.log("✅ Automatic deployment transaction:", hash);
+          console.log("✅ Smart Account deployment transaction:", hash);
           
           // Wait for deployment
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           console.log("✅ Transaction receipt:", receipt);
-          console.log("✅ Smart Account deployed at:", receipt.contractAddress);
+          console.log("📋 Contract address from receipt:", receipt.contractAddress);
           
           // Check if Smart Account is actually deployed after transaction
           const isActuallyDeployed = await isSmartAccountDeployed(smartAccountImpl.address as `0x${string}`);
-          console.log("✅ Smart Account deployment status after transaction:", isActuallyDeployed);
+          console.log("✅ Smart Account deployed:", isActuallyDeployed);
           
-          // Check bytecode directly
+          // Check bytecode
           const bytecode = await publicClient.getBytecode({ address: smartAccountImpl.address as `0x${string}` });
           console.log("✅ Smart Account bytecode length:", bytecode ? bytecode.length : 0);
-          console.log("✅ Smart Account has bytecode:", bytecode && bytecode !== '0x');
           
           // Update deployed status
           _sa!.isDeployed = isActuallyDeployed;
@@ -462,8 +477,21 @@ async function isSmartAccountDeployed(address: `0x${string}`): Promise<boolean> 
     });
 
     const code = await publicClient.getCode({ address });
-    return code !== '0x';
-  } catch {
+    const bytecode = await publicClient.getBytecode({ address });
+    
+    console.log("🔍 isSmartAccountDeployed debug:");
+    console.log("  - Address:", address);
+    console.log("  - getCode result:", code);
+    console.log("  - getBytecode result:", bytecode);
+    console.log("  - getCode length:", code ? code.length : 0);
+    console.log("  - getBytecode length:", bytecode ? bytecode.length : 0);
+    console.log("  - Is deployed (getCode):", code !== undefined && code !== '0x');
+    console.log("  - Is deployed (getBytecode):", bytecode !== undefined && bytecode !== '0x');
+    
+    // Use getBytecode instead of getCode for consistency
+    return bytecode !== undefined && bytecode !== '0x';
+  } catch (error) {
+    console.error("❌ isSmartAccountDeployed error:", error);
     return false;
   }
 }
