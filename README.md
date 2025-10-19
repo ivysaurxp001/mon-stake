@@ -12,6 +12,12 @@ A decentralized staking platform built on **Monad Testnet** that enables users t
 - **🎁 Flexible Rewards** - Claim anytime or auto-compound on unstake
 - **🌐 Cross-chain Ready** - Supports Monad Testnet and Ethereum Sepolia
 
+## 🌐 Live Application
+
+**🚀 Platform URL**: [https://mon-stake.vercel.app/](https://mon-stake.vercel.app/)
+
+The MON Staking Platform is live and fully operational on Vercel. Connect your MetaMask wallet and start staking immediately!
+
 ## 📋 Deployed Contracts
 
 ### Monad Testnet
@@ -360,6 +366,7 @@ We welcome contributions! Please follow these steps:
 
 ## 🆘 Support & Resources
 
+- **Live Platform**: [https://mon-stake.vercel.app/](https://mon-stake.vercel.app/)
 - **Documentation**: Check `/docs` folder for detailed guides
 - **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
 - **Monad Docs**: https://docs.monad.xyz
@@ -382,7 +389,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Built with ❤️ on Monad Testnet**
 
-**Contract Address**: `0x91e33a594da3e8e2ad3af5195611cf8cabe75353`
+**🚀 Live Platform**: [https://mon-stake.vercel.app/](https://mon-stake.vercel.app/)
 
-**Live Demo**: [Your Vercel URL]
+**📄 Contract Address**: `0x91e33a594da3e8e2ad3af5195611cf8cabe75353`
 
