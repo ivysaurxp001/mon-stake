@@ -66,20 +66,18 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
       smartAccountImpl = await toMetaMaskSmartAccount({
         client: publicClient,
         implementation: Implementation.Hybrid,
-        deployParams: [userAccount, [], [], []], // [owner, passkeyIds, publicKeyX, publicKeyY]
-        deploySalt: "0x",
+        deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
         signer: { walletClient },
-      });
+      } as any);
     } catch (error) {
       console.warn("⚠️ Failed to create Smart Account with Hybrid implementation, trying Stateless7702...");
       try {
         smartAccountImpl = await toMetaMaskSmartAccount({
           client: publicClient,
           implementation: Implementation.Stateless7702,
-          deployParams: [userAccount, [], [], []], // [owner, passkeyIds, publicKeyX, publicKeyY]
-          deploySalt: "0x",
+          deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
           signer: { walletClient },
-        });
+        } as any);
       } catch (error2) {
         console.error("❌ Failed to create Smart Account with both implementations:", error2);
         throw new Error("Smart Account creation failed. MetaMask Smart Account may not be supported on Monad testnet yet.");
@@ -189,7 +187,11 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
         }
       },
       getFactoryArgs: async () => {
-        return await smartAccountImpl.getFactoryArgs();
+        const result = await smartAccountImpl.getFactoryArgs();
+        return {
+          factory: result.factory || "0x",
+          factoryData: result.factoryData || "0x"
+        };
       },
       checkDeploymentStatus: async () => {
         try {
@@ -203,8 +205,8 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
           if (!factory || factory === '0x0000000000000000000000000000000000000000' || !isAddress(factory)) {
             console.warn("⚠️ Invalid factory address:", factory);
             return {
-              factory,
-              factoryData,
+              factory: factory || null,
+              factoryData: factoryData || null,
               factoryExists: false,
               canDeploy: false
             };
@@ -213,12 +215,12 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
           const factoryCode = await publicClient.getBytecode({ address: factory });
           
           return {
-            factory,
-            factoryData,
-            factoryExists: factoryCode && factoryCode !== '0x',
-            canDeploy: factory && factory !== '0x0000000000000000000000000000000000000000' && 
+            factory: factory || null,
+            factoryData: factoryData || null,
+            factoryExists: !!(factoryCode && factoryCode !== '0x'),
+            canDeploy: !!(factory && factory !== '0x0000000000000000000000000000000000000000' && 
                       factoryData && factoryData !== '0x' && 
-                      factoryCode && factoryCode !== '0x'
+                      factoryCode && factoryCode !== '0x')
           };
         } catch (error) {
           console.error("❌ Failed to check deployment status:", error);
@@ -283,9 +285,9 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
           
           return {
             address: smartAccountImpl.address,
-            hasBytecode,
+            hasBytecode: !!hasBytecode,
             bytecodeLength: bytecode ? bytecode.length : 0,
-            isDeployed: hasBytecode
+            isDeployed: !!hasBytecode
           };
         } catch (error) {
           console.error("❌ Failed to check Smart Account status:", error);
@@ -299,7 +301,7 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
       }
     };
 
-    return _sa;
+    return _sa as SmartAccount;
   } catch (error) {
     console.error("❌ Failed to create Smart Account:", error);
     throw error;
