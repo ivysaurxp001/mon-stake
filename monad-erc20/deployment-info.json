@@ -1,0 +1,17 @@
+{
+  "contract": "MonStaking",
+  "address": "0x91e33a594da3e8e2ad3af5195611cf8cabe75353",
+  "deployer": "0xd8FF12Afb233f53666a22373e864c3e23DcF7495",
+  "network": "Monad Testnet",
+  "chainId": 10143,
+  "rpcUrl": "https://rpc.ankr.com/monad_testnet",
+  "transactionHash": "0xaf2bfbe4d672bdfaa34a73ab0cd74540e55017c0c5c26ba4e8910df0134ef2f5",
+  "blockNumber": "43859289",
+  "gasUsed": "1084014",
+  "timestamp": "2025-10-18T04:31:36.053Z",
+  "constants": {
+    "REWARD_RATE": "10%",
+    "MIN_STAKE": "0.1 MON",
+    "LOCK_PERIOD": "7 days"
+  }
+}
