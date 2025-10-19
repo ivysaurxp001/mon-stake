@@ -1,0 +1,22 @@
+type Stakemon_RewardClaimed {
+  id: ID!
+  user: String!
+  amount: BigInt!
+  timestamp: BigInt!
+}
+
+type Stakemon_Staked {
+  id: ID!
+  user: String!
+  amount: BigInt!
+  timestamp: BigInt!
+}
+
+type Stakemon_Unstaked {
+  id: ID!
+  user: String!
+  amount: BigInt!
+  reward: BigInt!
+  timestamp: BigInt!
+}
+

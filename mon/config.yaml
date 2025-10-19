@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: mon
+networks:
+- id: 10143
+  start_block: 0
+  contracts:
+  - name: stakemon
+    address:
+    - 0x91e33A594dA3E8e2Ad3AF5195611cF8cabE75353
+    handler: src/EventHandlers.ts
+    events:
+    - event: RewardClaimed(address indexed user, uint256 amount, uint256 timestamp)
+    - event: Staked(address indexed user, uint256 amount, uint256 timestamp)
+    - event: Unstaked(address indexed user, uint256 amount, uint256 reward, uint256 timestamp)
+unordered_multichain_mode: true
+preload_handlers: true
