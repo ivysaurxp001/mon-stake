@@ -79,6 +79,9 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
     let smartAccountImpl;
     try {
       console.log("🔄 Trying Hybrid implementation...");
+      console.log("📋 Deploy params:", [userAccount, [], [], []]);
+      console.log("📋 Wallet client account:", walletClient.account);
+      
       smartAccountImpl = await toMetaMaskSmartAccount({
         client: publicClient,
         implementation: Implementation.Hybrid,
@@ -87,24 +90,23 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
       } as any);
       console.log("✅ Hybrid implementation successful");
     } catch (error) {
-      console.warn("⚠️ Failed to create Smart Account with Hybrid implementation, trying Stateless7702...");
+      console.warn("⚠️ Failed to create Smart Account with Hybrid implementation");
       console.error("Hybrid error details:", error);
-      try {
-        console.log("🔄 Trying Stateless7702 implementation...");
-        smartAccountImpl = await toMetaMaskSmartAccount({
-          client: publicClient,
-          implementation: Implementation.Stateless7702,
-          deployParams: [userAccount, [], [], []] as any, // [owner, passkeyIds, publicKeyX, publicKeyY]
-          signer: { walletClient },
-        } as any);
-        console.log("✅ Stateless7702 implementation successful");
-      } catch (error2) {
-        console.error("❌ Failed to create Smart Account with both implementations:");
-        console.error("Stateless7702 error details:", error2);
-        console.error("Error message:", error2.message);
-        console.error("Error stack:", error2.stack);
-        throw new Error("Smart Account creation failed. MetaMask Smart Account may not be supported on Monad testnet yet.");
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+      
+      // Check if it's a network issue
+      if (error.message.includes('network') || error.message.includes('chain')) {
+        throw new Error(`Network error: ${error.message}. Please ensure you're connected to Monad testnet in MetaMask.`);
       }
+      
+      // Check if it's a MetaMask issue
+      if (error.message.includes('user rejected') || error.message.includes('denied')) {
+        throw new Error(`User rejected the request. Please approve the Smart Account creation in MetaMask.`);
+      }
+      
+      // Generic error
+      throw new Error(`Smart Account creation failed: ${error.message}. Please check MetaMask connection and network.`);
     }
 
     console.log("✅ Smart Account created:", smartAccountImpl.address);
