@@ -7,6 +7,7 @@ export type SmartAccount = {
   isDeployed: boolean;
   deploy: () => Promise<`0x${string}`>;
   client: any;
+  implementation?: any; // MetaMask Smart Account implementation (for viem integration)
   getFactoryArgs: () => Promise<{ factory: `0x${string}`; factoryData: `0x${string}` }>;
   checkDeploymentStatus: () => Promise<{
     factory: string | null;
@@ -94,6 +95,7 @@ export async function getMetaMaskSmartAccount(): Promise<SmartAccount> {
       address: smartAccountImpl.address as `0x${string}`,
       isDeployed,
       client: publicClient,
+      implementation: smartAccountImpl, // Expose for viem bundler integration
       deploy: async () => {
         console.log("🚀 Deploying Smart Account manually...");
         

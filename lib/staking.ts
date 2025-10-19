@@ -1,4 +1,5 @@
-import { parseEther, formatEther, Address, encodeFunctionData, createPublicClient, http } from 'viem';
+import { parseEther, formatEther, Address, encodeFunctionData, encodeAbiParameters, keccak256, http } from 'viem';
+import { createBundlerClient } from 'viem/account-abstraction';
 import { publicClient } from './clients';
 import type { SmartAccount } from './smartAccount-deploy';
 
@@ -156,7 +157,7 @@ export async function getStakeInfo(userAddress: Address): Promise<StakeInfo> {
 }
 
 /**
- * Stake MON tokens using Smart Account via Bundler
+ * Stake MON tokens using Smart Account via Bundler (Viem way)
  */
 export async function stake(smartAccount: SmartAccount, amount: bigint): Promise<`0x${string}`> {
   if (STAKING_CONTRACT === '0x0000000000000000000000000000000000000000') {
@@ -167,16 +168,78 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
   console.log('Smart Account Address:', smartAccount.address);
   console.log('Staking Contract:', STAKING_CONTRACT);
 
+  // ✅ Use Viem bundlerClient.sendUserOperation() - the CORRECT way!
+  if (smartAccount.implementation) {
+    try {
+      console.log('🚀 Using Viem bundlerClient.sendUserOperation()...');
+      
+      // Check Smart Account balance
+      const balance = await smartAccount.client.getBalance({ 
+        address: smartAccount.address 
+      });
+      console.log('💰 Smart Account balance:', formatEther(balance), 'MON');
+      
+      if (balance < amount + parseEther('0.01')) {
+        throw new Error(`Smart Account needs more MON. Current: ${formatEther(balance)} MON. Need: ${formatEther(amount + parseEther('0.01'))} MON (stake + gas). Please fund it on /deploy page.`);
+      }
+      
+      // Create bundler client
+      const bundlerUrl = getBundlerUrl();
+      const bundlerClient = createBundlerClient({
+        client: publicClient,
+        transport: http(bundlerUrl),
+      });
+      
+      // Get gas prices
+      const gasPrice = await smartAccount.client.getGasPrice();
+      const maxFeePerGas = (gasPrice * 150n) / 100n; // 150% buffer
+      const maxPriorityFeePerGas = parseEther('0.000001');
+      
+      console.log('⛽ Gas prices:', {
+        maxFee: formatEther(maxFeePerGas),
+        maxPriority: formatEther(maxPriorityFeePerGas)
+      });
+      
+      // Encode stake() call
+      const stakeCallData = encodeFunctionData({
+        abi: STAKING_ABI,
+        functionName: 'stake',
+        args: []
+      });
+      
+      console.log('📋 Sending UserOp via bundlerClient...');
+      
+      // Send user operation using Viem's standard method
+      const userOperationHash = await bundlerClient.sendUserOperation({
+        account: smartAccount.implementation, // Use MetaMask Smart Account
+        calls: [
+          {
+            to: STAKING_CONTRACT,
+            value: amount,
+            data: stakeCallData,
+          },
+        ],
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+      
+      console.log('✅ UserOperation hash:', userOperationHash);
+      
+      // Wait for receipt
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: userOperationHash,
+      });
+      
+      console.log('✅ UserOperation receipt:', receipt);
+      return receipt.receipt.transactionHash;
+      
+    } catch (error) {
+      console.error('❌ Viem bundlerClient failed:', error);
+      throw error;
+    }
+  }
+
   try {
-    // Encode stake() function call
-    const stakeCallData = encodeFunctionData({
-      abi: STAKING_ABI,
-      functionName: 'stake',
-      args: []
-    });
-    
-    console.log('📋 Encoded stake function data:', stakeCallData);
-    
     // Get bundler URL
     const bundlerUrl = getBundlerUrl();
     
@@ -190,12 +253,39 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
       throw new Error(`Smart Account needs more MON. Current: ${formatEther(balance)} MON. Need: ${formatEther(amount + parseEther('0.01'))} MON (stake + gas). Please fund it on /deploy page.`);
     }
     
-    // Get nonce from Smart Account
-    const nonceValue = await smartAccount.client.getTransactionCount({ 
-      address: smartAccount.address 
-    });
+    // EntryPoint v0.7 on Monad testnet
+    const ENTRYPOINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
     
-    console.log('📋 Smart Account nonce:', nonceValue);
+    // Get nonce from EntryPoint contract (more accurate for ERC-4337)
+    let nonceValue: bigint;
+    try {
+      // Call getNonce on EntryPoint
+      const nonceData = await smartAccount.client.readContract({
+        address: ENTRYPOINT_V07,
+        abi: [
+          {
+            name: 'getNonce',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [
+              { name: 'sender', type: 'address' },
+              { name: 'key', type: 'uint192' }
+            ],
+            outputs: [{ name: 'nonce', type: 'uint256' }]
+          }
+        ],
+        functionName: 'getNonce',
+        args: [smartAccount.address, 0n] // key = 0 for default nonce sequence
+      });
+      nonceValue = nonceData as bigint;
+      console.log('📋 Smart Account nonce from EntryPoint:', nonceValue);
+    } catch (error) {
+      // Fallback to transaction count
+      nonceValue = await smartAccount.client.getTransactionCount({ 
+        address: smartAccount.address 
+      });
+      console.log('📋 Smart Account nonce from RPC (fallback):', nonceValue);
+    }
     
     // Get current gas price
     const gasPrice = await smartAccount.client.getGasPrice();
@@ -208,32 +298,36 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
       maxPriority: formatEther(maxPriorityFeePerGas)
     });
 
-    // IMPORTANT: ERC-4337 Smart Accounts need to wrap the call in executeBatch or similar
-    // Since direct calls don't support value, we need to encode: 
-    // executeBatch(address[] dest, uint256[] value, bytes[] func)
-    const executeBatchCallData = encodeFunctionData({
+    // ✅ Encode call for MetaMask Smart Account execute function
+    // execute(address target, uint256 value, bytes calldata data)
+    const stakeCallData = encodeFunctionData({
+      abi: STAKING_ABI,
+      functionName: 'stake',
+      args: []
+    });
+    
+    console.log('📋 Encoded stake function data:', stakeCallData);
+    
+    // Encode execute function call
+    const callData = encodeFunctionData({
       abi: [
         {
-          name: 'executeBatch',
+          name: 'execute',
           type: 'function',
-          stateMutability: 'nonpayable',
+          stateMutability: 'payable',
           inputs: [
-            { name: 'dest', type: 'address[]' },
-            { name: 'value', type: 'uint256[]' },
-            { name: 'func', type: 'bytes[]' }
+            { name: 'target', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'data', type: 'bytes' }
           ],
           outputs: []
         }
       ],
-      functionName: 'executeBatch',
-      args: [
-        [STAKING_CONTRACT], // dest array
-        [amount], // value array
-        [stakeCallData] // func array
-      ]
+      functionName: 'execute',
+      args: [STAKING_CONTRACT, amount, stakeCallData]
     });
     
-    console.log('📋 ExecuteBatch call data:', executeBatchCallData);
+    console.log('📋 execute() calldata:', callData);
     
     // Estimate gas using Pimlico bundler
     let estimatedGas = {
@@ -253,12 +347,16 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
             {
               sender: smartAccount.address,
               nonce: `0x${nonceValue.toString(16)}`,
-              initCode: '0x',
-              callData: executeBatchCallData,
-              paymasterAndData: '0x',
-              signature: '0x' + '00'.repeat(65), // Dummy signature for estimation
+              // v0.7: OMIT factory/paymaster fields if not used
+              callData: callData,
+              callGasLimit: '0x61a80', // 400k for estimation
+              verificationGasLimit: '0xf4240', // 1M for estimation
+              preVerificationGas: '0xc350', // 50k for estimation
+              maxFeePerGas: `0x${maxFeePerGas.toString(16)}`,
+              maxPriorityFeePerGas: `0x${maxPriorityFeePerGas.toString(16)}`,
+              signature: '0x' + 'ff'.repeat(65), // Dummy signature for estimation
             },
-            '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789' // EntryPoint v0.6
+            ENTRYPOINT_V07 // v0.7
           ],
           id: 1,
         }),
@@ -271,6 +369,8 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
         estimatedGas.verificationGasLimit = BigInt(estimateData.result.verificationGasLimit);
         estimatedGas.preVerificationGas = BigInt(estimateData.result.preVerificationGas);
         console.log('⚡ Gas estimated from bundler:', estimateData.result);
+      } else if (estimateData.error) {
+        console.warn('⚠️ Gas estimation error:', estimateData.error);
       }
     } catch (error) {
       console.warn('⚠️ Failed to estimate gas from bundler, using fallback values');
@@ -295,24 +395,239 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
       preVerificationGas: preVerificationGas.toString()
     });
     
-    // Create user operation with dynamic gas
-    const userOperation = {
+    // Create user operation v0.7 format
+    // IMPORTANT: For v0.7, if not using factory/paymaster, OMIT the fields entirely!
+    const userOpWithoutSig: any = {
       sender: smartAccount.address,
       nonce: `0x${nonceValue.toString(16)}`,
-      initCode: '0x',
-      callData: executeBatchCallData,
+      // OMIT factory/factoryData for already deployed accounts (don't send '0x')
+      callData: callData,
       callGasLimit: `0x${callGasLimit.toString(16)}`,
       verificationGasLimit: `0x${verificationGasLimit.toString(16)}`, 
       preVerificationGas: `0x${preVerificationGas.toString(16)}`,
       maxFeePerGas: `0x${maxFeePerGas.toString(16)}`,
       maxPriorityFeePerGas: `0x${maxPriorityFeePerGas.toString(16)}`,
-      paymasterAndData: '0x',
-      signature: '0x',
+      // OMIT paymaster fields (don't send '0x' or null)
+      signature: '0x' as `0x${string}`,
     };
+    
+    // ✅ Sign userOp with EOA owner (MetaMask)
+    if (typeof window !== 'undefined' && window.ethereum) {
+      try {
+        // Get EOA to sign
+        const accounts = await window.ethereum.request({
+          method: 'eth_requestAccounts',
+        });
+        const eoaAddress = accounts[0];
+        
+        console.log('🔐 Requesting signature from EOA:', eoaAddress);
+        
+        // ⚠️ Verify EOA is owner of Smart Account
+        try {
+          const owner = await smartAccount.client.readContract({
+            address: smartAccount.address,
+            abi: [
+              {
+                name: 'owner',
+                type: 'function',
+                stateMutability: 'view',
+                inputs: [],
+                outputs: [{ name: '', type: 'address' }]
+              }
+            ],
+            functionName: 'owner',
+          });
+          console.log('👤 Smart Account owner:', owner);
+          console.log('✅ EOA matches owner:', (owner as string).toLowerCase() === eoaAddress.toLowerCase());
+          
+          if ((owner as string).toLowerCase() !== eoaAddress.toLowerCase()) {
+            throw new Error(`EOA (${eoaAddress}) is not owner of Smart Account (owner: ${owner}). Please use the correct wallet or redeploy Smart Account.`);
+          }
+        } catch (error) {
+          console.warn('⚠️ Could not verify owner, proceeding anyway:', error);
+        }
+        
+        // Create userOpHash according to ERC-4337 v0.7 spec
+        // userOpHash = keccak256(abi.encode(userOp, entryPoint, chainId))
+        const chainId = await smartAccount.client.getChainId();
+        
+        // Pack userOp for hashing (v0.7 format)
+        const packedUserOp = encodeAbiParameters(
+          [
+            { name: 'sender', type: 'address' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'callData', type: 'bytes' },
+            { name: 'callGasLimit', type: 'uint256' },
+            { name: 'verificationGasLimit', type: 'uint256' },
+            { name: 'preVerificationGas', type: 'uint256' },
+            { name: 'maxFeePerGas', type: 'uint256' },
+            { name: 'maxPriorityFeePerGas', type: 'uint256' },
+          ],
+          [
+            userOpWithoutSig.sender as `0x${string}`,
+            BigInt(userOpWithoutSig.nonce),
+            userOpWithoutSig.callData as `0x${string}`,
+            BigInt(userOpWithoutSig.callGasLimit),
+            BigInt(userOpWithoutSig.verificationGasLimit),
+            BigInt(userOpWithoutSig.preVerificationGas),
+            BigInt(userOpWithoutSig.maxFeePerGas),
+            BigInt(userOpWithoutSig.maxPriorityFeePerGas),
+          ]
+        );
+        
+        const userOpHashData = encodeAbiParameters(
+          [
+            { name: 'hashedUserOp', type: 'bytes32' },
+            { name: 'entryPoint', type: 'address' },
+            { name: 'chainId', type: 'uint256' },
+          ],
+          [
+            keccak256(packedUserOp),
+            ENTRYPOINT_V07,
+            BigInt(chainId),
+          ]
+        );
+        
+        const userOpHash = keccak256(userOpHashData);
+        
+        console.log('📋 UserOpHash to sign:', userOpHash);
+        console.log('📋 EntryPoint:', ENTRYPOINT_V07);
+        console.log('📋 ChainId:', chainId);
+        
+        // Build EIP-712 typed data for UserOp v0.7
+        const domain = {
+          name: 'Account',
+          version: '1.0.0',
+          chainId: Number(chainId),
+          verifyingContract: ENTRYPOINT_V07,
+        };
+        
+        const types = {
+          PackedUserOperation: [
+            { name: 'sender', type: 'address' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'initCode', type: 'bytes32' },
+            { name: 'callData', type: 'bytes32' },
+            { name: 'accountGasLimits', type: 'bytes32' },
+            { name: 'preVerificationGas', type: 'uint256' },
+            { name: 'gasFees', type: 'bytes32' },
+            { name: 'paymasterAndData', type: 'bytes32' },
+          ],
+        };
+        
+        // Pack gas limits according to v0.7 spec
+        const accountGasLimits = encodeAbiParameters(
+          [{ type: 'uint128' }, { type: 'uint128' }],
+          [BigInt(userOpWithoutSig.verificationGasLimit), BigInt(userOpWithoutSig.callGasLimit)]
+        );
+        
+        const gasFees = encodeAbiParameters(
+          [{ type: 'uint128' }, { type: 'uint128' }],
+          [BigInt(userOpWithoutSig.maxPriorityFeePerGas), BigInt(userOpWithoutSig.maxFeePerGas)]
+        );
+        
+        const message = {
+          sender: userOpWithoutSig.sender,
+          nonce: BigInt(userOpWithoutSig.nonce),
+          initCode: keccak256('0x'), // hash of empty initCode
+          callData: keccak256(userOpWithoutSig.callData),
+          accountGasLimits: keccak256(accountGasLimits),
+          preVerificationGas: BigInt(userOpWithoutSig.preVerificationGas),
+          gasFees: keccak256(gasFees),
+          paymasterAndData: keccak256('0x'), // hash of empty paymaster
+        };
+        
+        console.log('📋 EIP-712 domain:', domain);
+        console.log('📋 EIP-712 message:', message);
+        
+        let signature: string;
+        
+        // Try EIP-712 first (recommended for Smart Accounts)
+        try {
+          console.log('🔐 Trying eth_signTypedData_v4 (EIP-712)...');
+          signature = await window.ethereum.request({
+            method: 'eth_signTypedData_v4',
+            params: [
+              eoaAddress,
+              JSON.stringify({
+                types,
+                domain,
+                primaryType: 'PackedUserOperation',
+                message,
+              }),
+            ],
+          });
+          console.log('✅ Signature obtained (EIP-712):', signature);
+        } catch (eip712Error) {
+          console.warn('⚠️ EIP-712 failed, trying personal_sign (EIP-191):', eip712Error);
+          
+          // Fallback to EIP-191
+          try {
+            signature = await window.ethereum.request({
+              method: 'personal_sign',
+              params: [userOpHash, eoaAddress],
+            });
+            console.log('✅ Signature obtained (EIP-191/personal_sign):', signature);
+          } catch (personalSignError) {
+            console.error('❌ All signing methods failed');
+            throw personalSignError;
+          }
+        }
+        
+        // Verify hash consistency
+        const hashFinal = keccak256(
+          encodeAbiParameters(
+            [
+              { name: 'hashedUserOp', type: 'bytes32' },
+              { name: 'entryPoint', type: 'address' },
+              { name: 'chainId', type: 'uint256' },
+            ],
+            [
+              keccak256(encodeAbiParameters(
+                [
+                  { name: 'sender', type: 'address' },
+                  { name: 'nonce', type: 'uint256' },
+                  { name: 'callData', type: 'bytes' },
+                  { name: 'callGasLimit', type: 'uint256' },
+                  { name: 'verificationGasLimit', type: 'uint256' },
+                  { name: 'preVerificationGas', type: 'uint256' },
+                  { name: 'maxFeePerGas', type: 'uint256' },
+                  { name: 'maxPriorityFeePerGas', type: 'uint256' },
+                ],
+                [
+                  userOpWithoutSig.sender as `0x${string}`,
+                  BigInt(userOpWithoutSig.nonce),
+                  userOpWithoutSig.callData as `0x${string}`,
+                  BigInt(userOpWithoutSig.callGasLimit),
+                  BigInt(userOpWithoutSig.verificationGasLimit),
+                  BigInt(userOpWithoutSig.preVerificationGas),
+                  BigInt(userOpWithoutSig.maxFeePerGas),
+                  BigInt(userOpWithoutSig.maxPriorityFeePerGas),
+                ]
+              )),
+              ENTRYPOINT_V07,
+              BigInt(chainId),
+            ]
+          )
+        );
+        
+        console.log('🔍 Hash consistency check:');
+        console.log('   Signed hash:', userOpHash);
+        console.log('   Final hash: ', hashFinal);
+        console.log('   Match:', userOpHash.toLowerCase() === hashFinal.toLowerCase() ? '✅ YES' : '❌ NO - WILL FAIL AA24!');
+        
+        userOpWithoutSig.signature = signature as `0x${string}`;
+      } catch (error) {
+        console.error('❌ Failed to get signature:', error);
+        throw new Error('User rejected signature request or signing failed');
+      }
+    }
+    
+    const userOperation = userOpWithoutSig;
 
     console.log('📋 User Operation:', userOperation);
 
-    // Send user operation via bundler
+    // Send user operation via bundler (use v0.7 EntryPoint)
     const userOpResponse = await fetch(bundlerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -321,7 +636,7 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
         method: 'eth_sendUserOperation',
         params: [
           userOperation,
-          '0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789' // EntryPoint v0.6
+          ENTRYPOINT_V07 // EntryPoint v0.7
         ],
         id: 1,
       }),
@@ -331,6 +646,7 @@ export async function stake(smartAccount: SmartAccount, amount: bigint): Promise
     
     if (userOpData.error) {
       console.error('❌ Bundler error:', userOpData.error);
+      console.error('📋 UserOp that failed:', userOperation);
       throw new Error(`Bundler error: ${userOpData.error.message || JSON.stringify(userOpData.error)}`);
     }
     
